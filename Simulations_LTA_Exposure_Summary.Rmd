@@ -1,0 +1,456 @@
+---
+title: "Simulation Results"
+author: ""
+date: '`r format(Sys.time(), "%d %B %Y")`'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(tidyverse)
+
+knitr::opts_chunk$set(error=TRUE, echo=FALSE)
+knitr::knit_hooks$set(inline = function(x) { if(!is.numeric(x)){ x }else{ prettyNum(x, big.mark=",") } })
+knitr::opts_chunk$set(fig.path = "../Figures/Exposure_Simulations_v2/Separate_set/")
+knitr::opts_chunk$set(fig.align='center') 
+knitr::opts_chunk$set(tab.align='center')
+
+results_dir <- "results/"
+
+```
+
+
+# Load Results 
+
+```{r}
+load(paste0(results_dir, "Sim_design1.RData"))
+load(paste0(results_dir, "Sim_design1A23.RData"))
+load(paste0(results_dir, "Sim_design2.RData"))
+load(paste0(results_dir, "Sim_design3.RData"))
+load(paste0(results_dir, "Sim_design4.RData"))
+load(paste0(results_dir, "Sim_design5.RData"))
+load(paste0(results_dir, "Sim_design6.RData"))
+load(paste0(results_dir, "Sim_design7.RData"))
+
+sim_results <- bind_rows(sim_design1,
+                         sim_design1A23,
+                         sim_design2,
+                         sim_design3,
+                         sim_design4,
+                         sim_design5,
+                         sim_design6)
+
+```
+
+
+```{r cacl-relative-MSE}
+sim_results <- sim_results %>%
+  mutate(MSE_ratio_hh=MSE.hh_avg.TobsPobs/MSE.splinetime.TobsPobs,
+       MSE_ratio_notime=MSE.wgroup.TobsPobs/MSE.splinetime.TobsPobs,
+       MSE_ratio_factime=MSE.factime.TobsPobs/MSE.splinetime.TobsPobs,
+       MSE_ratio_splinetime2=MSE.splinetime2.TobsPobs/MSE.splinetime.TobsPobs) %>%
+  mutate(MSE_ratio2_hh=MSE.hh_avg.TobsPobs/MSE.splinetime2.TobsPobs,
+       MSE_ratio2_notime=MSE.wgroup.TobsPobs/MSE.splinetime2.TobsPobs,
+       MSE_ratio2_factime=MSE.factime.TobsPobs/MSE.splinetime2.TobsPobs,
+       MSE_ratio2_splinetime=MSE.splinetime.TobsPobs/MSE.splinetime2.TobsPobs)
+```
+
+
+
+```{r cacl-relative-RMSE}
+sim_results <- sim_results %>%
+  mutate(RMSE_ratio_hh=sqrt(MSE_ratio_hh),
+       RMSE_ratio_notime=sqrt(MSE_ratio_notime),
+       RMSE_ratio_factime=sqrt(MSE_ratio_factime),
+       RMSE_ratio_splinetime2=sqrt(MSE_ratio_splinetime2))  %>%
+   mutate(RMSE_ratio2_hh=sqrt(MSE_ratio2_hh),
+       RMSE_ratio2_notime=sqrt(MSE_ratio2_notime),
+       RMSE_ratio2_factime=sqrt(MSE_ratio2_factime),
+       RMSE_ratio2_splinetime=sqrt(MSE_ratio2_splinetime)) 
+```
+
+
+
+```{r create-results-subsets}
+MSE_results <- sim_results %>%
+    select(-contains("sigA")) %>%
+  select(-contains("sigE")) %>%
+    select(-contains("ratio")) %>%
+  pivot_longer(cols=contains(".")) %>%
+  separate(name,
+           into=c("metric", "model", "comparison"),
+           sep="\\.") %>%
+  filter(metric=="MSE")  %>%
+  filter(comparison=="TobsPobs")  %>%
+  mutate(Model=case_when(model=="factime"~"MM: Time as Factor",
+                       model=="hh_avg"~"HH Avg.",
+                       model=="lintime"~"MM: Linear Time",
+                       model=="nogroup"~"MM: No Time, No Group Effect",
+                       model=="wgroup"~"MM: No Time",
+                       model=="splinetime"~"MM: Time Spline",
+                       model=="splinetime2"~"MM: Time Spline",
+                       TRUE~model))
+```
+
+# Design 1
+
+## Setting A
+
+### Absolute MSE
+#### All models
+```{r mse-design1-settingA-allModels,  fig.height=4.5, fig.width=4.5}
+g_ratio <- MSE_results %>%
+  filter(design %in% c(1)) %>%
+  filter(setting %in% c("A")) %>%
+  ggplot() +
+  theme_bw() +
+   geom_path(aes(x=J,
+                 y=value,
+                 col=Model)) +
+  geom_point(aes(x=J,
+                 y=value,
+                 col=Model,
+                 shape=Model)) +
+  ylab("MSE") + 
+  guides(color=guide_legend(nrow=3)) + 
+  theme(legend.position="bottom")
+g_ratio
+```
+
+#### Subset of Models
+```{r mse-design1-settingA, fig.height=4.5, fig.width=4.5}
+# Plot MSE for Design 1, Setting A
+g_mse <- MSE_results %>%
+  filter(design %in% c(1),
+         setting %in% c("A")) %>%
+    filter(model %in% c("hh_avg", "nogroup", "wgroup")) %>%
+
+  ggplot() +
+  theme_bw() +
+    geom_path(aes(x=J,
+                 y=value,
+                 col=Model)) +
+  geom_point(aes(x=J,
+                 y=value,
+                 col=Model,
+                 shape=Model), size=2) +
+  ylab("MSE") +
+  xlab("Number of Measurements per Household (J)")+ 
+  guides(color=guide_legend(nrow=2)) + 
+  theme(legend.position="bottom") +
+  ylim(c(0, 0.5))
+g_mse
+```
+
+### Absolute RMSE
+
+Designed to compare effect of ignoring stove in the model, as well as the role of additional measurements.
+
+```{r rmse-design1-settingA, fig.height=4.5, fig.width=4.5}
+# Plot RMSE for Design 1, Setting A
+g_rmse <- MSE_results %>%
+  filter(design %in% c(1),
+         setting %in% c("A")) %>%
+    filter(model %in% c("hh_avg", "nogroup", "wgroup")) %>%
+
+  ggplot() +
+  theme_bw() +
+    geom_path(aes(x=J,
+                 y=sqrt(value),
+                 col=Model)) +
+  geom_point(aes(x=J,
+                 y=sqrt(value),
+                 col=Model,
+                 shape=Model), size=2) +
+  ylab(expression("RMSE (Log "~mu~"g/m"^3~")")) +
+  xlab("Number of Measurements per Household (J)")+ 
+  guides(color=guide_legend(nrow=2)) + 
+  theme(legend.position="bottom") +
+  ylim(c(0, 1))
+g_rmse
+```
+
+## All Settings
+
+### Absolute MSE
+
+
+```{r mse-design1-dfJ, fig.height=4.5, fig.width=4.5}
+g_ratio <- MSE_results %>%
+  filter(design %in% c(1)) %>%
+  filter(!setting %in% c("B2")) %>%
+  rename(Trend=setting) %>%
+  mutate(Design=case_when(design==1~"1 -- Parallel",
+                          design==2~"2 -- Parallel, Staggered Baseline")) %>%
+  filter(model %in% c("splinetime2", "wgroup", "hh_avg")) %>%
+  ggplot() +
+  theme_bw() +
+  geom_path(aes(x=J,
+                 y=value,
+                 col=as.factor(Model))) +
+  geom_point(aes(x=J,
+                 y=value,
+                 col=as.factor(Model),
+                 shape=as.factor(Model))) +
+  ylab("MSE") + 
+  xlab("Number of Measurements per Household (J)")+ 
+  facet_wrap(~Trend,
+             scales="free_x",
+             labeller=labeller(Trend = label_both,
+                               design= label_both)) +
+  guides(color=guide_legend(nrow=1)) + 
+  theme(legend.position="bottom") +
+  scale_color_discrete(name="Design:")  +
+  scale_shape_discrete(name="Design:")  +
+    scale_y_continuous(breaks=c(0, 0.1, 0.2, 0.3, 0.4, 0.5), limits=c(0, 0.55))
+g_ratio
+```
+
+
+### Absolute RMSE
+
+```{r rmse-design1-dfJ, fig.height=4.5, fig.width=4.5}
+g_ratio <- MSE_results %>%
+  filter(design %in% c(1)) %>%
+  filter(!setting %in% c("B2")) %>%
+  rename(Trend=setting) %>%
+  mutate(Design=case_when(design==1~"1 -- Parallel",
+                          design==2~"2 -- Parallel, Staggered Baseline")) %>%
+  filter(model %in% c("splinetime2", "wgroup", "hh_avg")) %>%
+  ggplot() +
+  theme_bw() +
+  geom_path(aes(x=J,
+                 y=sqrt(value),
+                 col=as.factor(Model))) +
+  geom_point(aes(x=J,
+                 y=sqrt(value),
+                 col=as.factor(Model),
+                 shape=as.factor(Model))) +
+  ylab(expression("RMSE (Log "~mu~"g/m"^3~")")) +
+  xlab("Number of Measurements per Household (J)")+ 
+  facet_wrap(~Trend,
+             scales="free_x",
+             labeller=labeller(Trend = label_both,
+                               design= label_both)) +
+  guides(color=guide_legend(nrow=1)) + 
+  theme(legend.position="bottom") +
+  scale_color_discrete(name="Design:")  +
+  scale_shape_discrete(name="Design:")  +
+    scale_y_continuous(breaks=c(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8), limits=c(0, 0.75))
+g_ratio
+```
+
+
+# Design 2
+
+## All Settings
+
+### Absolute MSE
+
+
+```{r mse-design2-dfJ, fig.height=4.5, fig.width=4.5}
+g_ratio <- MSE_results %>%
+  filter(design %in% c(2)) %>%
+  filter(!setting %in% c("B2")) %>%
+  rename(Trend=setting) %>%
+  mutate(Design=case_when(design==1~"1 -- Parallel",
+                          design==2~"2 -- Parallel, Staggered Baseline")) %>%
+  filter(model %in% c("splinetime2", "wgroup", "hh_avg")) %>%
+  ggplot() +
+  theme_bw() +
+  geom_path(aes(x=J,
+                 y=value,
+                 col=as.factor(Model))) +
+  geom_point(aes(x=J,
+                 y=value,
+                 col=as.factor(Model),
+                 shape=as.factor(Model))) +
+  ylab("MSE") + 
+  xlab("Number of Measurements per Household (J)")+ 
+  facet_wrap(~Trend,
+             scales="free_x",
+             labeller=labeller(Trend = label_both,
+                               design= label_both)) +
+  guides(color=guide_legend(nrow=1)) + 
+  theme(legend.position="bottom") +
+  scale_color_discrete(name="Design:")  +
+  scale_shape_discrete(name="Design:")  +
+    scale_y_continuous(breaks=c(0, 0.1, 0.2, 0.3, 0.4, 0.5), limits=c(0, 0.55))
+g_ratio
+```
+
+
+### Absolute RMSE
+
+```{r rmse-design2-dfJ, fig.height=4.5, fig.width=4.5}
+g_ratio <- MSE_results %>%
+  filter(design %in% c(2)) %>%
+  filter(!setting %in% c("B2")) %>%
+  rename(Trend=setting) %>%
+  mutate(Design=case_when(design==1~"1 -- Parallel",
+                          design==2~"2 -- Parallel, Staggered Baseline")) %>%
+  filter(model %in% c("splinetime2", "wgroup", "hh_avg")) %>%
+  ggplot() +
+  theme_bw() +
+  geom_path(aes(x=J,
+                 y=sqrt(value),
+                 col=as.factor(Model))) +
+  geom_point(aes(x=J,
+                 y=sqrt(value),
+                 col=as.factor(Model),
+                 shape=as.factor(Model))) +
+  ylab(expression("RMSE (Log "~mu~"g/m"^3~")")) +
+  xlab("Number of Measurements per Household (J)")+ 
+  facet_wrap(~Trend,
+             scales="free_x",
+             labeller=labeller(Trend = label_both,
+                               design= label_both)) +
+  guides(color=guide_legend(nrow=1)) + 
+  theme(legend.position="bottom") +
+  scale_color_discrete(name="Design:")  +
+  scale_shape_discrete(name="Design:")  +
+    scale_y_continuous(breaks=c(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8), limits=c(0, 0.75))
+g_ratio
+```
+
+# Designs 1 and 2
+
+
+## Relative MSE 
+
+This compares the relative MSE for  model without time to model with time. Using splinetime2 as the reference category.
+
+```{r relmse-designs12-dfJ, fig.height=4.5, fig.width=4.5}
+# Plot MSE ratio, ignoring time to including time
+# Comparison is splinetime2
+g_ratio <- sim_results %>%
+  filter(design %in% c(1, 2)) %>%
+  rename(Trend=setting) %>%
+  mutate(Design=case_when(design==1~"1 -- Parallel",
+                          design==2~"2 -- Parallel, Staggered Baseline")) %>%
+  ggplot() +
+  theme_bw() +
+  geom_hline(aes(yintercept=1)) +
+  # geom_point(aes(x=J,
+  #                y=MSE_ratio_hh,
+  #                col="1")) +
+  geom_path(aes(x=J,
+                 y=RMSE_ratio2_notime,
+                 col=Design)) +
+  geom_point(aes(x=J,
+                 y=RMSE_ratio2_notime,
+                 col=Design,
+                 shape=Design)) +
+  ylab("Relative RMSE") + 
+  xlab("Number of Measurements per Household (J)")+ 
+  facet_wrap(~Trend,
+             scales="free_x",
+             labeller=labeller(Trend = label_both,
+                               design= label_both)) +
+  guides(color=guide_legend(nrow=1)) + 
+  theme(legend.position="bottom") +
+  scale_color_discrete(name="Design:")  +
+  scale_shape_discrete(name="Design:") 
+g_ratio
+```
+
+
+
+# Other Designs (3-7)
+
+## RMSE
+
+```{r rmse-designs6911, fig.width=6.5, fig.height=8}
+# Plot MSE ratio, ignoring time to including time
+g_ratio <- MSE_results %>%
+  filter(setting!="B2") %>%
+  filter(design %in% c(3:7)) %>%
+    rename(Trend=setting) %>%
+  mutate(Design=case_when(design==3~"3 -- Parallel, Aligned Baseline, 4 Obs.",
+                          design==4~"4 -- Parallel, Staggered Baseline, 4 Obs.",
+                          design==5~"5 -- Parallel, Staggered Baseline, 6 Obs.",
+                          design==6~"6 -- Stepped Wedge, Aligned Baseline, 6 Obs.",
+                          design==7~"7 -- Stepped Wedge, Staggered Baseline, 6 Obs.")) %>%
+      filter(!model %in% c("factime")) %>%
+
+  ggplot() +
+  theme_bw() +
+  geom_point(aes(x=Trend,
+                 shape=Model,
+                 col=Model,
+                 y=sqrt(value)),
+                 position=position_jitter(height=0, width=0.1)) +
+  ylab(expression("RMSE (Log "~mu~"g/m"^3~")")) +
+  facet_wrap(~Design, ncol=2) +
+  guides(color=guide_legend(nrow=2)) + 
+  theme(legend.position="bottom") +
+  scale_color_discrete(name="Model:")  +
+  scale_shape_discrete(name="Model:")
+g_ratio
+```
+
+
+```{r rmse-designs6911-n50, fig.width=6.5, fig.height=8}
+# Plot MSE ratio, ignoring time to including time
+g_ratio <- MSE_results_n50 %>%
+  filter(setting!="B2") %>%
+  filter(design %in% c(3:7)) %>%
+    rename(Trend=setting) %>%
+    
+  mutate(Design=case_when(design==3~"3 -- Parallel, Aligned Baseline, 4 Obs.",
+                          design==4~"4 -- Parallel, Staggered Baseline, 4 Obs.",
+                          design==5~"5 -- Parallel, Staggered Baseline, 6 Obs.",
+                          design==6~"6 -- Stepped Wedge, Aligned Baseline, 6 Obs.",
+                          design==7~"7 -- Stepped Wedge, Staggered Baseline, 6 Obs.")) %>%
+      filter(!model %in% c("factime")) %>%
+
+  ggplot() +
+  theme_bw() +
+  geom_point(aes(x=Trend,
+                 shape=Model,
+                 col=Model,
+                 y=sqrt(value)),
+                 position=position_jitter(height=0, width=0.1)) +
+  ylab(expression("RMSE (Log "~mu~"g/m"^3~")")) +
+  facet_wrap(~Design, ncol=2) +
+  guides(color=guide_legend(nrow=2)) + 
+  theme(legend.position="bottom") +
+  scale_color_discrete(name="Model:")  +
+  scale_shape_discrete(name="Model:")
+g_ratio
+```
+
+
+## Relative RMSE version
+
+
+```{r relrmse-designs6911-df2, fig.width=4.5, fig.height=4.5}
+# Plot MSE ratio, ignoring time to including time
+g_ratio <- sim_results %>%
+  filter(setting!="B2") %>%
+  filter(design %in% c(3:7)) %>%
+
+    rename(Trend=setting) %>%
+  mutate(Design=case_when(design==3~"3 -- Parallel, Aligned Baseline, 4 Obs.",
+                          design==4~"4 -- Parallel, Staggered Baseline, 4 Obs.",
+                          design==5~"5 -- Parallel, Staggered Baseline, 6 Obs.",
+                          design==6~"6 -- Stepped Wedge, Aligned Baseline, 6 Obs.",
+                          design==7~"7 -- Stepped Wedge, Staggered Baseline, 6 Obs.")) %>%
+  ggplot() +
+  theme_bw() +
+  geom_hline(aes(yintercept=1)) +
+  geom_point(aes(x=Trend,
+                 shape=Design,
+                 col=Design,
+                 y=RMSE_ratio2_notime),
+             position=position_jitter(height=0, width=0.1)) +
+  ylab("Relative RMSE") + 
+  guides(color=guide_legend(nrow=5)) + 
+  theme(legend.position="bottom") +
+  scale_color_discrete(name="Design:")  +
+  scale_shape_discrete(name="Design:")
+
+g_ratio
+```
+
+

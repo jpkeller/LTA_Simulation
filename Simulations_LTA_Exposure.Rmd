@@ -1,0 +1,395 @@
+---
+title: 'Simulations of Estimating Long-term Average Exposures in Cookstove Studies'
+author: ""
+date: '`r format(Sys.time(), "%d %B %Y")`'
+output:
+  bookdown::html_document2:
+    self_contained: true
+    split_by: none
+    output_dir: '../' 
+    toc: yes
+    toc_float: yes
+fontsize: 10pt
+---
+    
+<!-- # includes: -->
+<!-- # in_header: preamble-mathjax.tex -->
+<!-- bibliography: PrincipalStratBib.bib -->
+
+
+```{r setup, include=FALSE}
+library(knitr)
+
+knitr::opts_chunk$set(error=TRUE, echo=FALSE)
+knitr::knit_hooks$set(inline = function(x) { if(!is.numeric(x)){ x }else{ prettyNum(x, big.mark=",") } })
+knitr::opts_chunk$set(fig.path = "fig/")
+knitr::opts_chunk$set(fig.align='center') 
+knitr::opts_chunk$set(tab.align='center')
+
+code_dir <- ""
+results_dir <- "results/"
+
+library(tidyverse)
+library(here)
+
+library(bercs)
+
+library(lme4)
+library(performance)
+library(splines)
+library(parallel)
+
+q25 <- function(w, ...) quantile(w, probs=0.25, ...)
+q75 <- function(w, ...) quantile(w, probs=0.75, ...)
+```
+
+```{r setup_stan, echo=FALSE, include=FALSE}
+# library(rstan)
+# rstan_options(auto_write = TRUE)
+# options(mc.cores = max(1, parallel::detectCores()-2))
+```
+# Setup
+
+## Temporal trends
+
+```{r trend_funs}
+fA <- function(w) 0*w
+fB <- function(w) 0.5*sinpi(2*w)  
+fC <- function(w, start_interval_length=0, interval_gap,interval_length, J)  -0.1*(w - (start_interval_length + ifelse(length(interval_gap)>1, interval_length + max(interval_gap), J*(interval_length + interval_gap)))/2)
+fD <- function(w, start_interval_length=0, interval_gap,interval_length, J) 0.5*sinpi(2*w)  +  -0.5*(w - (start_interval_length + ifelse(length(interval_gap)>1, interval_length + max(interval_gap), J*(interval_length + interval_gap)))/2)
+fE <- function(w)  -0.5*sinpi(2*w) + -0.1*sinpi(12*w) - 0.2*sinpi(4*(w-0.2))
+fF <- function(w)  0.2279585- 0.1* exp(-2*sinpi(2*w)) + 0.05*sinpi(12*w)
+```
+
+
+```{r trends_plot, cache=TRUE, fig.height=4, fig.width=4.5}
+x <- seq(0, 2, length=501)[-501]
+fdemo <- data.frame(x=x) %>%
+  mutate(A=fA(x),
+         B=fB(x),
+         C=fC(x, J=8, interval_gap=0, interval_length=0.25),
+         D=fD(x, J=8, interval_gap=0, interval_length=0.25),
+         E=fE(x),
+         F=fF(x)) %>%
+  pivot_longer(-x, names_to="Trend") %>%
+  mutate(date=lubridate::date_decimal(x)) %>%
+  mutate(date=lubridate::date(date))
+ggplot(fdemo) + theme_bw() + 
+  geom_path(aes(x=date, y=value, col=Trend, lty=Trend)) +
+  scale_x_date(date_labels = "%b") +
+  xlab("Date") +
+  ylab("Trend Value")
+```
+
+## Simulation Functions
+
+```{r}
+source("simulation_functions.R")
+```
+
+```{r}
+run_many_wrapper <- function(design,
+                             setting,
+                             J,
+                             J1=J,
+                             J2=J,
+                             firstgroup=1,
+                             B=10,
+                             n=200,
+                             cores=1,
+                             time_spline_df=6,
+                             time_spline_df2=4) {
+  
+  
+  if (design==0 ){
+    times= rep(1:J, times=c(n*2))
+       study_type="parallel"
+ interval_length=0
+    interval_gap=0
+    random_initial_only=FALSE
+    start_interval_length=0
+    truth_timerange_min=0
+    truth_timerange_max=0
+  } else if (design==1) {
+    times= "sample"
+        study_type="parallel"
+interval_length=0.0833
+    interval_gap=0.1666
+    random_initial_only=FALSE
+    start_interval_length=0
+  } else if (design==2) {
+    times= "sample"
+       study_type="parallel"
+ interval_length=0.0833
+    interval_gap=0.1666
+    random_initial_only=FALSE
+    start_interval_length=0.2
+  }  else if (design==3) {
+    times= "sample"
+        study_type="parallel"
+interval_length=0.1
+    interval_gap=c(0, 0.2, 0.45, 0.95)
+    random_initial_only=FALSE
+    start_interval_length=0
+  }   else if (design==4) {
+    times= "sample"
+        study_type="parallel"
+interval_length=0.1
+    interval_gap=c(0, 0.2, 0.45, 0.95)
+    random_initial_only=FALSE
+    start_interval_length=1.5
+  }   else if (design==5) {
+    times= "sample"
+        study_type="parallel"
+    interval_length=0.1
+    interval_gap=c(0, 0.2, 0.45, 0.7, 0.95, 1.45)
+    random_initial_only=FALSE
+    start_interval_length=1.5
+  }  else if (design==6) {
+    times= "sample"
+    study_type="crossover"
+   interval_length=0.0833
+    interval_gap=0.1666
+    random_initial_only=FALSE
+    start_interval_length=0
+  } else if (design==7) {
+    times= "sample"
+    study_type="crossover"
+   interval_length=0.0833
+    interval_gap=0.1666
+    random_initial_only=FALSE
+    start_interval_length=1
+  }
+  
+  
+  if (setting=="A"){
+    sigA2 <-  0.5
+    sigE2 <-  1
+    groupmeans <- c(4, 5)
+    timefn <- fA
+  } else if (setting=="B"){
+    sigA2 <-  0.5
+    sigE2 <-  1
+    groupmeans <- c(4, 5)
+    timefn <- fB
+  } else if (setting=="C"){
+    sigA2 <-  0.5
+    sigE2 <-  1
+    groupmeans <- c(4, 5)
+    timefn <- function(w) fC(w, 
+                             start_interval_length=start_interval_length,
+                             interval_gap=interval_gap,
+                             interval_length=interval_length,
+                             J=J)
+  } else if (setting=="D"){
+    sigA2 <-  0.5
+    sigE2 <-  1
+    groupmeans <- c(4, 5)
+    timefn <- function(w) fD(w, 
+                             start_interval_length=start_interval_length,
+                             interval_gap=interval_gap,
+                             interval_length=interval_length,
+                             J=J)
+    } else if (setting=="E"){
+    sigA2 <-  0.5
+    sigE2 <-  1
+    groupmeans <- c(4, 5)
+    timefn <- fE
+  } else if (setting=="F"){
+    sigA2 <-  0.5
+    sigE2 <-  1
+    groupmeans <- c(4, 5)
+    timefn <- fF
+  }
+  
+  res <- run_many(B=B,
+                  study_type=study_type,
+          ngroups=2,
+          n=n, # per group
+          J=J,
+          J1=J1,
+          J2=J2,
+          firstgroup=firstgroup,
+          groupmeans=groupmeans,
+          sigE=sqrt(sigE2),
+          sigA=sqrt(sigA2),
+          verbose=FALSE,
+          timefn=timefn, ## **ASSUMED TO HAVE MEAN ZERO**
+          times=times,
+          time_spline_df=time_spline_df,
+          time_spline_df2=time_spline_df2,
+          truth_timerange_min=0,
+          truth_timerange_max=start_interval_length + (J-1)*interval_gap + J*interval_length,
+          cores=cores,
+          interval_length=interval_length,
+          interval_gap=interval_gap,
+          random_initial_only=random_initial_only,
+          start_interval_length=start_interval_length)
+  res$setting <- setting
+  res$design <- design
+  res$B <- B
+  res$J <- J
+  res$J1 <- J1
+  res$J2 <- J2
+  res
+}
+```
+
+
+Design description:
+
+
+|Design	| Study Type	| Study Duration (months) |	J	| Description |
+|:--:|:----|:--:|:-:|:----------------------|
+| Design 1	| Parallel	| 4-16 months	| 2-6	| Measurements spaced three months apart (i.e., all participants with a visit in each of months 1, 4, 7, etc.). The time for each visit is randomly selected within a one-month window. |
+| Design 2	| Parallel	| 16-28 months	| 2-6	| Measurements spaced three months apart, but initial visit is randomly chosen within first year (therefore, all months during the year contain visits). The time for each visit is randomly selected within a one-month window.
+| Design 3 |	Parallel	| 12 months	| 4	| Measurements made in months 1, 3, 6, and 12. The time for each visit is randomly selected within a five-week window.
+| Design 4 | 	Parallel	| 30 months	| 4	| Measurements made in months 1, 3, 6, and 12, except initial visit for each household is randomly chosen within first 18 months. The time for each visit is randomly selected within a five-week window.
+| Design 5 | Parallel	| 36 months	| 6	| Measurements made in months 1, 3, 6, 9, 12, and 18, except initial visit for each household is randomly chosen within first 18 months. The time for each visit is randomly selected within a five-week window.
+| Design 6 |	Stepped-wedge	| 16 months	| 6	|Either 2 or 4 measurements in each stove group. Measurements made every three months (i.e., months 1, 4, 7, 10, 13, 16). The time for each visit is randomly selected within a one-month window.
+| Design 7 |	Stepped-wedge	| 28 months	| 6 |	Either 2 or 4 measurements in each stove group. Measurements made every three months (i.e., months 1, 4, 7, 10, 13, 16), except initial visit is randomly chosen within first year. The time for each visit is randomly selected within a one-month window.
+
+# Run Simulations
+
+```{r flag_design_changes, cache=TRUE}
+ 
+```
+
+## Design 1
+```{r des1, echo=FALSE, cache=TRUE, dependson="flag_design_changes"}
+# Design 1
+sim_design1 <- data.frame()
+for (setting in c("A", "B", "C", "D", "E", "F")){
+  for (J  in 2:6){
+res <- run_many_wrapper(setting=setting,
+                        design=1,
+                        J=J,
+                        B=6, # Set to 100
+                        cores=6,
+                        time_spline_df2=J)
+sim_design1 <- bind_rows(sim_design1, res)
+}
+}
+save(sim_design1, file=paste0(results_dir, "Sim_design1.RData"))
+rm(sim_design1)
+```
+
+
+## Design 2
+```{r des2, echo=FALSE, cache=TRUE, dependson="flag_design_changes"}
+# Design 2
+sim_design2 <- data.frame()
+for (setting in c("A", "B", "C", "D", "E", "F")){
+  for (J  in 2:6){
+res <- run_many_wrapper(setting=setting,
+                        design=2,
+                        J=J,
+                        B=6,
+                       cores=6,
+                        time_spline_df2=J)
+sim_design2 <- bind_rows(sim_design2, res)
+}
+}
+save(sim_design2, file=paste0(results_dir, "Sim_design2.RData"))
+rm(sim_design2)
+```
+
+## Design 3
+```{r des3, echo=FALSE, cache=TRUE, dependson="flag_design_changes"}
+# Design 3
+sim_design3 <- data.frame()
+for (setting in c("A", "B", "C", "D", "E", "F")){
+  for (J  in 4){
+    res <- run_many_wrapper(setting=setting,
+                            design=3,
+                            J=J,
+                        B=6,
+                       cores=6,
+                        time_spline_df2=4)
+    sim_design3 <- bind_rows(sim_design3, res)
+  }
+}
+save(sim_design3, file=paste0(results_dir, "Sim_design3.RData"))
+rm(sim_design3)
+```
+
+## Design 4
+```{r des4, echo=FALSE, cache=TRUE, dependson="flag_design_changes"}
+sim_design4 <- data.frame()
+for (setting in c("A", "B", "C", "D", "E", "F")){
+  for (J  in 4){
+    res <- run_many_wrapper(setting=setting,
+                            design=4,
+                            J=J,
+                        B=6, 
+                        cores=6,
+                        time_spline_df2=10)
+    sim_design4 <- bind_rows(sim_design4, res)
+  }
+}
+save(sim_design4, file=paste0(results_dir, "Sim_design4.RData"))
+rm(sim_design4)
+```
+
+## Design 5
+```{r des5, echo=FALSE, cache=TRUE, dependson="flag_design_changes"}
+sim_design5 <- data.frame()
+for (setting in c("A", "B", "C", "D", "E", "F")){
+  for (J  in 6){
+    res <- run_many_wrapper(setting=setting,
+                            design=5,
+                            J=J,
+                        B=6,
+                       cores=6,
+                        time_spline_df2=12)
+    sim_design5 <- bind_rows(sim_design5, res)
+  } 
+}
+save(sim_design5, file=paste0(results_dir, "Sim_design5.RData"))
+rm(sim_design5)
+```
+
+
+## Design 6
+```{r des6, echo=FALSE, cache=TRUE, dependson="flag_design_changes"}
+sim_design6 <- data.frame()
+for (setting in c("A", "B", "C", "D", "E", "F")){
+  for (J  in 6){
+    res <- run_many_wrapper(setting=setting,
+                            design=6,
+                            J=6,
+                            J1=2,
+                            J2=4,
+                            firstgroup=1,
+                        B=6,
+                       cores=6,
+                        time_spline_df2=5) 
+    sim_design6 <- bind_rows(sim_design6, res)
+  }
+}
+save(sim_design6, file=paste0(results_dir, "Sim_design6.RData"))
+rm(sim_design6)
+```
+
+
+## Design 7
+```{r des7, echo=FALSE, cache=TRUE, dependson="flag_design_changes"}
+sim_design7 <- data.frame()
+for (setting in c("A", "B", "C", "D", "E", "F")){
+  for (J  in 6){
+    res <- run_many_wrapper(setting=setting,
+                            design=7,
+                            J=6,
+                            J1=2,
+                            J2=4,
+                            firstgroup=1,
+                        B=6,
+                       cores=6,
+                        time_spline_df2=9)
+    sim_design7 <- bind_rows(sim_design7, res)
+  } 
+}
+save(sim_design7, file=paste0(results_dir, "Sim_design7.RData"))
+rm(sim_design7)
+```
+
